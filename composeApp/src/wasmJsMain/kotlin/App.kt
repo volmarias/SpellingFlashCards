@@ -8,8 +8,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,12 +57,15 @@ fun App() {
             wordEngine.prepare()
             wordEngineLoaded = true
         }
-        var guessWord by remember { mutableStateOf("") }
+        val guessWord = remember { mutableStateOf("") }
+        var lastWord by remember { mutableStateOf("") }
 
         val attemptGuess = {
-            if (guessWord.trim().isNotEmpty()) {
+            val guess = guessWord.value.trim()
+            if (guess.isNotEmpty()) {
                 ttsScope.launch {
-                    val guessResult = wordEngine.guess(guessWord)
+                    lastWord = wordEngine.currentWord.value ?: ""
+                    val guessResult = wordEngine.guess(guess)
                     if (guessResult) {
                         "correct"
                     } else {
@@ -67,7 +74,7 @@ fun App() {
                         isWorking = true
                         ttsInstance?.say(this, clearQueue = true, callback = {
                             ttsScope.launch {
-                                guessWord = ""
+                                guessWord.value = ""
                                 delay(500)
                                 (wordEngine.currentWord.value ?: "No more words").apply { ttsInstance?.say(this) }
                                 isWorking = false
@@ -94,25 +101,7 @@ fun App() {
                 }
                 Column {
 //                Text("Current word: ${wordEngine.currentWord.value}")
-                    TextField(
-                        guessWord,
-                        onValueChange = {
-                            guessWord = it
-                        },
-                        enabled = !shouldWait,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().wrapContentHeight().focusRequester(focusRequester),
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Characters,
-                            autoCorrect = false,
-                            keyboardType = KeyboardType.Ascii,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions {
-                            attemptGuess()
-                        },
-                        textStyle = MaterialTheme.typography.h2
-                    )
+                    GuessField(guessWord, shouldWait, focusRequester, attemptGuess)
                     Button(enabled = !shouldWait, onClick = attemptGuess) {
                         Text("Guess")
                     }
@@ -124,33 +113,27 @@ fun App() {
                     }
 
                     ttsInstance?.let {
-                        VoiceSelectionDropDown(it, selected = {
+                        VoiceSelectionDropDown(it, enabled = !shouldWait, selected = {
                             ttsScope.launch {
                                 ttsInstance?.say("Your word is ${wordEngine.currentWord.value}")
                             }
                         })
                     }
-                    Spacer(modifier = Modifier.height(50.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (lastWord.trim().isNotEmpty()) {
+                        Text("Last word: $lastWord")
+                    }
+                    Spacer(modifier = Modifier.height(30.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         with(wordEngine) {
                             if (incorrectWordList.isNotEmpty()) {
-                                LazyColumn {
-                                    item { Text("Incorrect Words") }
-                                    items(incorrectWordList) {
-                                        Text(it)
-                                    }
-                                }
+                                WordColumn(incorrectWordList, "Incorrect Words")
                             }
                             if (incorrectWordList.isNotEmpty() && correctWordList.isNotEmpty()) {
                                 Spacer(modifier = Modifier.size(50.dp))
                             }
                             if (correctWordList.isNotEmpty()) {
-                                LazyColumn {
-                                    item { Text("Correct Words") }
-                                    items(correctWordList) {
-                                        Text(it)
-                                    }
-                                }
+                                WordColumn(correctWordList, "Correct Words")
                             }
                         }
                     }
@@ -164,13 +147,64 @@ fun App() {
             }
         }
     }
-
 }
 
 @Composable
-fun VoiceSelectionDropDown(ttsInstance: TextToSpeechInstance, selected: (Voice) -> Unit = {}) {
+private fun WordColumn(words: List<String>, title: String) {
+    Box(modifier = Modifier.wrapContentSize().drawWithCache {
+        val brush = Brush.verticalGradient(listOf(Color.Transparent, Color.White))
+        onDrawWithContent {
+            drawContent()
+            drawRect(brush)
+        }
+    }) {
+
+        LazyColumn(modifier = Modifier.wrapContentHeight()) {
+            item { Text(title) }
+            items(words.reversed().take(10)) {
+                Text(it)
+            }
+            if (words.size < 10) {
+                items(10 - words.size) {
+                    Text(" ")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuessField(
+    guessWord: MutableState<String>,
+    shouldWait: Boolean,
+    focusRequester: FocusRequester,
+    attemptGuess: () -> Unit
+) {
+    TextField(
+        guessWord.value,
+        onValueChange = {
+            guessWord.value = it
+        },
+        enabled = !shouldWait,
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().wrapContentHeight().focusRequester(focusRequester),
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.Characters,
+            autoCorrect = false,
+            keyboardType = KeyboardType.Ascii,
+            imeAction = ImeAction.Done
+        ),
+        keyboardActions = KeyboardActions {
+            attemptGuess()
+        },
+        textStyle = MaterialTheme.typography.h2
+    )
+}
+
+@Composable
+fun VoiceSelectionDropDown(ttsInstance: TextToSpeechInstance, enabled: Boolean = true, selected: (Voice) -> Unit = {}) {
     var expanded by remember { mutableStateOf(false) }
-    Button(onClick = { expanded = true }) {
+    Button(onClick = { expanded = true }, enabled = enabled) {
         Text("Current voice:\n${ttsInstance.currentVoice?.name ?: "No voice selected!"}")
     }
     DropdownMenu(
